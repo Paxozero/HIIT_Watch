@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>HIIT Watch</title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- React y ReactDOM -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <!-- Babel para compilar JSX en el navegador -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+</head>
+<body class="bg-black text-white m-0 p-0 overflow-hidden">
+<div id="root"></div>
+
+<script type="text/babel">
+    const { useState, useEffect, useRef, useCallback } = React;
+
+    const INITIAL_WORK = 30;
+    const INITIAL_REST = 10;
+    const INITIAL_ROUNDS = 8;
+
+    const vibrate = (pattern) => {
+        if ('vibrate' in navigator) {
+            navigator.vibrate(pattern);
+        }
+    };
+
+    // Sintetizador de audio con Web Audio API
+    const playBeep = (isFinal = false) => {
+        try {
+            const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            const oscillator = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+
+            oscillator.type = 'sine';
+            oscillator.frequency.setValueAtTime(isFinal ? 300 : 880, audioCtx.currentTime); // Tono más grave para el final
+
+            gainNode.gain.setValueAtTime(0.1, audioCtx.currentTime);
+            gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + (isFinal ? 0.8 : 0.15));
+
+            oscillator.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+
+            oscillator.start();
+            oscillator.stop(audioCtx.currentTime + (isFinal ? 0.8 : 0.15));
+        } catch (e) {
+            console.log("Audio no soportado o bloqueado");
+        }
+    };
+
+    const App = () => {
+        const [workTime, setWorkTime] = useState(INITIAL_WORK);
+        const [restTime, setRestTime] = useState(INITIAL_REST);
+        const [totalRounds, setTotalRounds] = useState(INITIAL_ROUNDS);
+        const [isConfiguring, setIsConfiguring] = useState(true);
+
+        const [timeRemaining, setTimeRemaining] = useState(INITIAL_WORK);
+        const [currentRound, setCurrentRound] = useState(1);
+        const [phase, setPhase] = useState('work');
+        const [isRunning, setIsRunning] = useState(false);
+        const [statusMessage, setStatusMessage] = useState("¡Listo para empezar!");
+
+        const intervalRef = useRef(null);
+
+        const formatTime = (seconds) => {
+            const min = Math.floor(seconds / 60);
+            const sec = seconds % 60;
+            return `${min.toString().padStart(2, '0')}:${sec.toString().padStart(2, '0')}`;
+        };
+
+        const toggleRunning = useCallback(() => {
+            if (timeRemaining === 0 && phase === 'finished') {
+                handleReset();
+            } else {
+                setIsRunning(prev => !prev);
+            }
+        }, [timeRemaining, phase]);
+
+        const handleReset = useCallback(() => {
+            clearInterval(intervalRef.current);
+            intervalRef.current = null;
+            setIsRunning(false);
+            setPhase('work');
+            setCurrentRound(1);
+            setTimeRemaining(workTime);
+            setStatusMessage("¡Listo para empezar!");
+            vibrate(200);
+        }, [workTime]);
+
+        const handleStart = useCallback(() => {
+            setIsConfiguring(false);
+            setIsRunning(true);
+            setTimeRemaining(workTime);
+            setPhase('work');
+            setCurrentRound(1);
+            setStatusMessage("¡A TRABAJAR!");
+            vibrate(500);
+        }, [workTime]);
+
+        useEffect(() => {
+            if (isRunning && !intervalRef.current) {
+                intervalRef.current = setInterval(() => {
+                    setTimeRemaining(prevTime => {
+                        if (prevTime <= 6 && prevTime > 1) {
+                            playBeep(false);
+                            vibrate(100);
+                        } else if (prevTime === 1) {
+                            playBeep(true);
+                            vibrate(300);
+                        }
+
+                        if (prevTime <= 1) {
+                            clearInterval(intervalRef.current);
+                            intervalRef.current = null;
+
+                            if (phase === 'work') {
+                                if (currentRound < totalRounds) {
+                                    setPhase('rest');
+                                    setTimeRemaining(restTime);
+                                    setStatusMessage("DESCANSO");
+                                    vibrate([200, 100, 200]);
+                                } else {
+                                    setPhase('finished');
+                                    setTimeRemaining(0);
+                                    setIsRunning(false);
+                                    setStatusMessage("¡ENTRENAMIENTO TERMINADO!");
+                                    vibrate([500, 200, 500]);
+                                }
+                            } else if (phase === 'rest') {
+                                const nextRound = currentRound + 1;
+                                setCurrentRound(nextRound);
+                                setPhase('work');
+                                setTimeRemaining(workTime);
+                                setStatusMessage(`RONDA ${nextRound}: ¡A TRABAJAR!`);
+                                vibrate(500);
+                            }
+                            return 0;
+                        }
+                        return prevTime - 1;
+                    });
+                }, 1000);
+            } else if (!isRunning && intervalRef.current) {
+                clearInterval(intervalRef.current);
+                intervalRef.current = null;
+            }
+            return () => {
+                if (intervalRef.current) clearInterval(intervalRef.current);
+            };
+        }, [isRunning, phase, currentRound, workTime, restTime, totalRounds]);
+
+        const TimeInput = ({ label, time, setTime }) => (
+            <div className="flex flex-col items-center p-1">
+                <div className="flex items-center justify-center w-full">
+                    <button onClick={() => setTime(prev => Math.max(prev - 5, 5))} className="text-xl font-bold text-white bg-zinc-800 rounded-full w-10 h-10 flex items-center justify-center">-</button>
+                    <div className="mx-3 text-center">
+                        <span className="text-lg font-mono text-white block">{formatTime(time)}</span>
+                        <span className="text-[10px] text-zinc-400 uppercase">{label}</span>
+                    </div>
+                    <button onClick={() => setTime(prev => Math.min(prev + 5, 300))} className="text-xl font-bold text-white bg-zinc-800 rounded-full w-10 h-10 flex items-center justify-center">+</button>
+                </div>
+            </div>
+        );
+
+        return (
+            <div className="min-h-screen bg-black flex items-center justify-center p-2 font-sans select-none">
+                <div className="w-full max-w-[280px] h-[280px] bg-black rounded-full border-2 border-zinc-800 shadow-2xl overflow-hidden text-white flex flex-col items-center justify-between relative p-4">
+                    {isConfiguring ? (
+                        <div className="w-full h-full flex flex-col items-center justify-center">
+                            <h1 className="text-xs font-bold text-zinc-400 uppercase tracking-wider mb-2">Configuración</h1>
+                            <TimeInput label="Trabajo" time={workTime} setTime={setWorkTime} />
+                            <TimeInput label="Descanso" time={restTime} setTime={setRestTime} />
+                            <button onClick={handleStart} className="w-4/5 py-2 mt-2 text-xs font-extrabold text-black bg-emerald-400 rounded-full shadow-lg">COMENZAR</button>
+                        </div>
+                    ) : (
+                        <div className={`w-full h-full flex flex-col items-center justify-between transition-colors duration-500 rounded-full p-2 ${phase === 'work' ? 'bg-red-950/40' : phase === 'rest' ? 'bg-emerald-950/40' : 'bg-yellow-950/40'}`}>
+                            <div className="flex justify-center items-center w-full pt-1">
+                                <span className="text-[11px] font-semibold text-zinc-400">RONDA {currentRound} / {totalRounds}</span>
+                            </div>
+
+                            <button onClick={() => setIsConfiguring(true)} className="absolute right-6 top-1/2 -translate-y-1/2 p-2 bg-zinc-900 border border-zinc-700 rounded-full text-zinc-300 shadow-md">
+                                <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"></path><path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path></svg>
+                            </button>
+
+                            <div className="flex flex-col items-center justify-center my-auto">
+                                <span className="text-5xl font-black font-mono tracking-tight text-white">{formatTime(timeRemaining)}</span>
+                                <span className="text-[10px] font-bold uppercase tracking-widest text-zinc-400 mt-1">
+                                    {phase === 'work' ? 'TRABAJO' : phase === 'rest' ? 'DESCANSO' : 'COMPLETADO'}
+                                </span>
+                            </div>
+
+                            <div className="flex space-x-3 w-full justify-center pb-2">
+                                <button onClick={handleReset} className="p-2.5 text-white bg-zinc-800 rounded-full shadow-lg">
+                                    <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>
+                                </button>
+                                <button onClick={toggleRunning} className={`p-2.5 text-black rounded-full shadow-lg ${isRunning ? 'bg-red-400' : 'bg-emerald-400'}`}>
+                                    {isRunning ? (
+                                        <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M10 9v6m4-6v6m7-3a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                                    ) : (
+                                        <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"></path><path strokeLinecap="round" strokeLinejoin="round" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                                    )}
+                                </button>
+                            </div>
+                        </div>
+                    )}
+                </div>
+            </div>
+        );
+    };
+
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(<App />);
+</script>
+</body>
+</html>
